@@ -144,7 +144,7 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
           onChange={(e) => setSpaceName(e.target.value)}
           style={{ ...styles.input, flex: 1 }}
         />
-        <button onClick={handleAddSpace} style={styles.btnPrimary}>Add</button>
+        <button onClick={handleAddSpace} className="btnLink">Add</button>
       </div>
 
       <div>
@@ -161,7 +161,7 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                 <span>{space.name}</span>
               </div>
               <button
-                style={styles.btnDangerSm}
+                className="btnLink"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDeleteSpace(space.id);
@@ -186,7 +186,7 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                     }}
                     style={styles.inputSm}
                   />
-                  <button style={styles.btnSm} onClick={() => handleAddFolder(space.id)}>
+                  <button className="btnLink" onClick={() => handleAddFolder(space.id)}>
                     + Folder
                   </button>
                 </div>
@@ -202,7 +202,7 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                     }}
                     style={styles.inputSm}
                   />
-                  <button style={styles.btnSm} onClick={() => handleAddListAtSpace(space.id)}>
+                  <button className="btnLink" onClick={() => handleAddListAtSpace(space.id)}>
                     + List
                   </button>
                 </div>
@@ -223,14 +223,14 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                   >
                     <button
                       onClick={() => onSelectList(list.id)}
-                      style={styles.btnGhost}
+                      className="btnLink"
                       title="Show tasks"
                     >
                       {list.name}
                     </button>
                     <button
                       onClick={() => handleDeleteList(null, list.id, space.id)}
-                      style={styles.btnDangerTiny}
+                      className="btnLink"
                       title="Delete list"
                     >
                       Delete
@@ -266,7 +266,7 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                             style={styles.inputSm}
                           />
                           <button
-                            style={styles.btnSm}
+                            className="btnLink"
                             onClick={() => handleAddListAtFolder(folder.id)}
                           >
                             + List
@@ -287,14 +287,14 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                           >
                             <button
                               onClick={() => onSelectList(list.id)}
-                              style={styles.btnGhost}
+                              className="btnLink"
                               title="Show tasks"
                             >
                               {list.name}
                             </button>
                             <button
                               onClick={() => handleDeleteList(folder.id, list.id)}
-                              style={styles.btnDangerTiny}
+                              className="btnLink"
                               title="Delete list"
                             >
                               Delete
@@ -374,47 +374,4 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     outline: "none",
   },
-
-  // Buttons (high-contrast)
-  btnPrimary: {
-    padding: "6px 10px",
-    border: "1px solid #3b82f6",
-    background: "#3b82f6",
-    color: "#ffffff",
-    borderRadius: 6,
-    cursor: "pointer",
-  },
-  btnSm: {
-    padding: "4px 8px",
-    border: "1px solid #3b82f6",
-    background: "#3b82f6",
-    color: "#ffffff",
-    borderRadius: 6,
-    cursor: "pointer",
-  },
-  btnDangerSm: {
-    padding: "4px 8px",
-    border: "1px solid #ef4444",
-    background: "#ef4444",
-    color: "#ffffff",
-    borderRadius: 6,
-    cursor: "pointer",
-  },
-  btnDangerTiny: {
-    padding: "2px 6px",
-    border: "1px solid #ef4444",
-    background: "#ef4444",
-    color: "#ffffff",
-    borderRadius: 6,
-    cursor: "pointer",
-    fontSize: 12,
-  },
-  btnGhost: {
-    background: "transparent",
-    border: "none",
-    color: "#111827",
-    padding: "4px 6px",
-    cursor: "pointer",
-    textAlign: "left",
-  },
-};
+}

@@ -95,28 +95,6 @@ export default function App() {
     return hh > 0 ? `${pad(hh)}:${pad(mm)}:${pad(ss)}` : `${pad(mm)}:${pad(ss)}`;
   }
 
-  // ----- small button styles -----
-  function btnOutline(): React.CSSProperties {
-    return {
-      padding: "6px 10px",
-      border: "1px solid #c7d2fe",
-      color: "#3730a3",
-      background: "#eef2ff",
-      borderRadius: 6,
-      cursor: "pointer",
-    };
-  }
-  function btnDanger(): React.CSSProperties {
-    return {
-      padding: "6px 10px",
-      border: "1px solid #ef4444",
-      background: "#ef4444",
-      color: "#ffffff",
-      borderRadius: 6,
-      cursor: "pointer",
-    };
-  }
-
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <Sidebar selectedListId={selectedListId} onSelectList={setSelectedListId} />
@@ -144,14 +122,6 @@ export default function App() {
               />
               <button
                 onClick={addTask}
-                style={{
-                  padding: "8px 12px",
-                  border: "1px solid #3b82f6",
-                  borderRadius: 6,
-                  background: "#3b82f6",
-                  color: "#ffffff",  // high contrast
-                  cursor: "pointer",
-                }}
               >
                 Add
               </button>
@@ -203,23 +173,15 @@ export default function App() {
                       {/* ⏱ Stopwatch toggle */}
                       <button
                         onClick={() => toggleTimerFor(t)}
-                        style={{
-                          padding: "6px 10px",
-                          border: running ? "1px solid #34d399" : "1px solid #d1d5db",
-                          background: running ? "#ecfdf5" : "#fff",
-                          color: running ? "#065f46" : "inherit",
-                          borderRadius: 6,
-                          cursor: "pointer",
-                        }}
                         title={running ? "Stop timer" : "Start timer"}
                       >
                         ⏱ {running ? "Stop" : "Start"}
                       </button>
 
-                      <button onClick={() => onReset(t)} style={btnOutline()} title="Reset">
+                      <button onClick={() => onReset(t)} title="Reset">
                         ↺
                       </button>
-                      <button onClick={() => delTask(t.id)} style={btnDanger()} title="Delete">
+                      <button onClick={() => delTask(t.id)} className="btnLink" title="Delete">
                         Delete
                       </button>
                     </div>
