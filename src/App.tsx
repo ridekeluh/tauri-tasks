@@ -109,9 +109,9 @@ export default function App() {
   function btnDanger(): React.CSSProperties {
     return {
       padding: "6px 10px",
-      border: "1px solid #fecaca",
-      color: "#b91c1c",
-      background: "#fff1f2",
+      border: "1px solid #ef4444",
+      background: "#ef4444",
+      color: "#ffffff",
       borderRadius: 6,
       cursor: "pointer",
     };
@@ -146,9 +146,10 @@ export default function App() {
                 onClick={addTask}
                 style={{
                   padding: "8px 12px",
-                  border: "1px solid #d1d5db",
+                  border: "1px solid #3b82f6",
                   borderRadius: 6,
-                  background: "#ffffff",
+                  background: "#3b82f6",
+                  color: "#ffffff",  // high contrast
                   cursor: "pointer",
                 }}
               >

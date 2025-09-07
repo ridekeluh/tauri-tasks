@@ -1,18 +1,23 @@
 // src/components/Sidebar.tsx
 import { useEffect, useState } from "react";
+import type React from "react"; // for React.CSSProperties in styles
 import type { Space, Folder, List } from "../types";
 import {
   getSpaces,
   getFolders,
-  getLists,
+  getSpaceLists,
+  getFolderLists,
   addSpace,
   addFolder,
-  addList,
+  addListToSpace,
+  addListToFolder,
+  deleteSpace as dbDeleteSpace,
+  deleteList as dbDeleteList,
 } from "../db";
 
 type Props = {
   selectedListId: number | null;
-  onSelectList: (listId: number) => void;
+  onSelectList: (listId: number | null) => void; // allow clearing selection
 };
 
 export default function Sidebar({ selectedListId, onSelectList }: Props) {
@@ -21,12 +26,13 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
   const [expandedFolders, setExpandedFolders] = useState<Record<number, boolean>>({});
   const [foldersBySpace, setFoldersBySpace] = useState<Record<number, Folder[]>>({});
   const [listsByFolder, setListsByFolder] = useState<Record<number, List[]>>({});
+  const [listsBySpace, setListsBySpace] = useState<Record<number, List[]>>({});
 
   const [spaceName, setSpaceName] = useState("");
   const [folderName, setFolderName] = useState("");
   const [listName, setListName] = useState("");
 
-  const [activeSpaceForNewFolder, setActiveSpaceForNewFolder] = useState<number | null>(null);
+  const [activeSpaceForNewFolderOrList, setActiveSpaceForNewFolderOrList] = useState<number | null>(null);
   const [activeFolderForNewList, setActiveFolderForNewList] = useState<number | null>(null);
 
   useEffect(() => {
@@ -41,21 +47,28 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
   async function toggleSpace(spaceId: number) {
     const isOpen = !!expandedSpaces[spaceId];
     setExpandedSpaces((m) => ({ ...m, [spaceId]: !isOpen }));
-    if (!isOpen && !foldersBySpace[spaceId]) {
-      const fs = await getFolders(spaceId);
-      setFoldersBySpace((m) => ({ ...m, [spaceId]: fs }));
+    if (!isOpen) {
+      if (!foldersBySpace[spaceId]) {
+        const fs = await getFolders(spaceId);
+        setFoldersBySpace((m) => ({ ...m, [spaceId]: fs }));
+      }
+      if (!listsBySpace[spaceId]) {
+        const ls = await getSpaceLists(spaceId);
+        setListsBySpace((m) => ({ ...m, [spaceId]: ls }));
+      }
     }
   }
 
-  async function toggleFolder(folderId: number, spaceId: number) {
+  async function toggleFolder(folderId: number) {
     const isOpen = !!expandedFolders[folderId];
     setExpandedFolders((m) => ({ ...m, [folderId]: !isOpen }));
     if (!isOpen && !listsByFolder[folderId]) {
-      const ls = await getLists(folderId);
+      const ls = await getFolderLists(folderId);
       setListsByFolder((m) => ({ ...m, [folderId]: ls }));
     }
   }
 
+  // ----- Adders -----
   async function handleAddSpace() {
     if (!spaceName.trim()) return;
     await addSpace(spaceName.trim());
@@ -71,66 +84,166 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
     setFoldersBySpace((m) => ({ ...m, [spaceId]: fs }));
   }
 
-  async function handleAddList(folderId: number) {
+  async function handleAddListAtSpace(spaceId: number) {
     if (!listName.trim()) return;
-    await addList(folderId, listName.trim());
+    await addListToSpace(spaceId, listName.trim());
     setListName("");
-    const ls = await getLists(folderId);
+    const ls = await getSpaceLists(spaceId);
+    setListsBySpace((m) => ({ ...m, [spaceId]: ls }));
+  }
+
+  async function handleAddListAtFolder(folderId: number) {
+    if (!listName.trim()) return;
+    await addListToFolder(folderId, listName.trim());
+    setListName("");
+    const ls = await getFolderLists(folderId);
     setListsByFolder((m) => ({ ...m, [folderId]: ls }));
+  }
+
+  // ----- Deleters -----
+  async function handleDeleteSpace(spaceId: number) {
+    await dbDeleteSpace(spaceId);
+    if (selectedListId != null) onSelectList(null);
+    await refreshSpaces();
+    setFoldersBySpace((m) => {
+      const { [spaceId]: _, ...rest } = m;
+      return rest;
+    });
+    setListsBySpace((m) => {
+      const { [spaceId]: _, ...rest } = m;
+      return rest;
+    });
+  }
+
+  async function handleDeleteList(
+    folderId: number | null,
+    listId: number,
+    spaceIdForTopLevel?: number
+  ) {
+    await dbDeleteList(listId);
+
+    if (folderId) {
+      const ls = await getFolderLists(folderId);
+      setListsByFolder((m) => ({ ...m, [folderId]: ls }));
+    } else if (spaceIdForTopLevel) {
+      const ls = await getSpaceLists(spaceIdForTopLevel);
+      setListsBySpace((m) => ({ ...m, [spaceIdForTopLevel]: ls }));
+    }
+
+    if (selectedListId === listId) onSelectList(null);
   }
 
   return (
     <div style={styles.sidebar}>
       <div style={styles.sectionHeader}>Spaces</div>
 
-      <div style={{ padding: "0 8px 12px" }}>
+      <div style={{ padding: "0 8px 12px", display: "flex", gap: 8 }}>
         <input
           placeholder="New space..."
           value={spaceName}
           onChange={(e) => setSpaceName(e.target.value)}
-          style={styles.input}
+          style={{ ...styles.input, flex: 1 }}
         />
-        <button onClick={handleAddSpace} style={styles.btn}>Add</button>
+        <button onClick={handleAddSpace} style={styles.btnPrimary}>Add</button>
       </div>
 
       <div>
         {spaces.map((space) => (
           <div key={space.id} style={styles.spaceBlock}>
-            <div
-              style={styles.spaceRow}
-              onClick={() => toggleSpace(space.id)}
-              title="Toggle folders"
-            >
-              <span style={styles.chev}>{expandedSpaces[space.id] ? "▾" : "▸"}</span>
-              <span>{space.name}</span>
+            {/* Space header row with Delete */}
+            <div style={{ ...styles.spaceRow, justifyContent: "space-between" }}>
+              <div
+                onClick={() => toggleSpace(space.id)}
+                style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                title="Toggle open/close"
+              >
+                <span style={styles.chev}>{expandedSpaces[space.id] ? "▾" : "▸"}</span>
+                <span>{space.name}</span>
+              </div>
+              <button
+                style={styles.btnDangerSm}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteSpace(space.id);
+                }}
+                title="Delete space"
+              >
+                Delete
+              </button>
             </div>
 
+            {/* Expanded space content */}
             {expandedSpaces[space.id] && (
               <div style={styles.folders}>
-                {/* Add folder row */}
+                {/* Add FOLDER (space level) */}
                 <div style={{ display: "flex", gap: 6, margin: "4px 0 8px 18px" }}>
                   <input
                     placeholder="New folder..."
-                    value={activeSpaceForNewFolder === space.id ? folderName : ""}
+                    value={activeSpaceForNewFolderOrList === space.id ? folderName : ""}
                     onChange={(e) => {
-                      setActiveSpaceForNewFolder(space.id);
+                      setActiveSpaceForNewFolderOrList(space.id);
                       setFolderName(e.target.value);
                     }}
                     style={styles.inputSm}
                   />
-                  <button
-                    style={styles.btnSm}
-                    onClick={() => handleAddFolder(space.id)}
-                  >
+                  <button style={styles.btnSm} onClick={() => handleAddFolder(space.id)}>
                     + Folder
                   </button>
                 </div>
 
+                {/* Add LIST at SPACE level */}
+                <div style={{ display: "flex", gap: 6, margin: "4px 0 8px 18px" }}>
+                  <input
+                    placeholder="New list..."
+                    value={activeSpaceForNewFolderOrList === space.id ? listName : ""}
+                    onChange={(e) => {
+                      setActiveSpaceForNewFolderOrList(space.id);
+                      setListName(e.target.value);
+                    }}
+                    style={styles.inputSm}
+                  />
+                  <button style={styles.btnSm} onClick={() => handleAddListAtSpace(space.id)}>
+                    + List
+                  </button>
+                </div>
+
+                {/* SPACE-LEVEL LISTS */}
+                {(listsBySpace[space.id] || []).map((list) => (
+                  <div
+                    key={list.id}
+                    style={{
+                      ...styles.listRow,
+                      ...(selectedListId === list.id ? styles.listRowActive : {}),
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 6,
+                      marginLeft: 18,
+                    }}
+                  >
+                    <button
+                      onClick={() => onSelectList(list.id)}
+                      style={styles.btnGhost}
+                      title="Show tasks"
+                    >
+                      {list.name}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteList(null, list.id, space.id)}
+                      style={styles.btnDangerTiny}
+                      title="Delete list"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+
+                {/* FOLDERS (each with their nested lists) */}
                 {(foldersBySpace[space.id] || []).map((folder) => (
                   <div key={folder.id} style={{ marginLeft: 18 }}>
                     <div
                       style={styles.folderRow}
-                      onClick={() => toggleFolder(folder.id, space.id)}
+                      onClick={() => toggleFolder(folder.id)}
                       title="Toggle lists"
                     >
                       <span style={styles.chev}>
@@ -141,7 +254,7 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
 
                     {expandedFolders[folder.id] && (
                       <div style={styles.lists}>
-                        {/* Add list row */}
+                        {/* Add LIST under THIS FOLDER */}
                         <div style={{ display: "flex", gap: 6, margin: "4px 0 8px 18px" }}>
                           <input
                             placeholder="New list..."
@@ -154,7 +267,7 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                           />
                           <button
                             style={styles.btnSm}
-                            onClick={() => handleAddList(folder.id)}
+                            onClick={() => handleAddListAtFolder(folder.id)}
                           >
                             + List
                           </button>
@@ -163,14 +276,29 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                         {(listsByFolder[folder.id] || []).map((list) => (
                           <div
                             key={list.id}
-                            onClick={() => onSelectList(list.id)}
                             style={{
                               ...styles.listRow,
                               ...(selectedListId === list.id ? styles.listRowActive : {}),
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 6,
                             }}
-                            title="Show tasks"
                           >
-                            {list.name}
+                            <button
+                              onClick={() => onSelectList(list.id)}
+                              style={styles.btnGhost}
+                              title="Show tasks"
+                            >
+                              {list.name}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteList(folder.id, list.id)}
+                              style={styles.btnDangerTiny}
+                              title="Delete list"
+                            >
+                              Delete
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -230,6 +358,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#eef2ff",
   },
   chev: { width: 14, display: "inline-block" },
+
+  // Inputs
   input: {
     width: "60%",
     padding: "6px 8px",
@@ -244,18 +374,47 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     outline: "none",
   },
-  btn: {
+
+  // Buttons (high-contrast)
+  btnPrimary: {
     padding: "6px 10px",
-    border: "1px solid #d1d5db",
+    border: "1px solid #3b82f6",
+    background: "#3b82f6",
+    color: "#ffffff",
     borderRadius: 6,
-    background: "#fff",
     cursor: "pointer",
   },
   btnSm: {
     padding: "4px 8px",
-    border: "1px solid #d1d5db",
+    border: "1px solid #3b82f6",
+    background: "#3b82f6",
+    color: "#ffffff",
     borderRadius: 6,
-    background: "#fff",
     cursor: "pointer",
+  },
+  btnDangerSm: {
+    padding: "4px 8px",
+    border: "1px solid #ef4444",
+    background: "#ef4444",
+    color: "#ffffff",
+    borderRadius: 6,
+    cursor: "pointer",
+  },
+  btnDangerTiny: {
+    padding: "2px 6px",
+    border: "1px solid #ef4444",
+    background: "#ef4444",
+    color: "#ffffff",
+    borderRadius: 6,
+    cursor: "pointer",
+    fontSize: 12,
+  },
+  btnGhost: {
+    background: "transparent",
+    border: "none",
+    color: "#111827",
+    padding: "4px 6px",
+    cursor: "pointer",
+    textAlign: "left",
   },
 };

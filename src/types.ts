@@ -12,13 +12,15 @@ export interface Folder {
 
 export interface List {
   id: number;
-  folder_id: number;
-  name: string;
+  space_id: number;
+  folder_id: number | null; name: string; 
 }
 
 export interface Task {
   id: number;
   list_id: number;
   title: string;
-  done: number; // 0 | 1
+  done: number; // 0|1
+  accumulated_seconds: number;
+  running_since: string | null;
 }
