@@ -14,6 +14,9 @@ import {
   renameSpace,
   renameFolder,
   renameList,
+  moveListToSpace,
+  moveListToFolder,
+  moveFolder,
   deleteSpace as dbDeleteSpace,
   deleteList as dbDeleteList,
   deleteFolder as dbDeleteFolder, 
@@ -47,6 +50,11 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
 
   const [editingListId, setEditingListId] = useState<number | null>(null);
   const [listDraftEdit, setListDraftEdit] = useState("");
+
+  // track the current dropdown selection per list id
+  const [movePick, setMovePick] = useState<Record<number, string>>({});
+
+  const [moveFolderPick, setMoveFolderPick] = useState<Record<number, string>>({});
 
   useEffect(() => {
     refreshSpaces();
@@ -303,7 +311,7 @@ async function handleDeleteFolder(spaceId: number, folderId: number) {
                 </div>
 
                 {/* SPACE-LEVEL LISTS */}
-                {(listsBySpace[space.id] || []).map((list) => (
+               {(listsBySpace[space.id] || []).map((list) => (
                   <div
                     key={list.id}
                     style={{
@@ -316,6 +324,7 @@ async function handleDeleteFolder(spaceId: number, folderId: number) {
                       marginLeft: 18,
                     }}
                   >
+                    {/* open the list */}
                     <button
                       onClick={() => onSelectList(list.id)}
                       className="btnLink"
@@ -323,15 +332,87 @@ async function handleDeleteFolder(spaceId: number, folderId: number) {
                     >
                       {list.name}
                     </button>
-                    <button
-                      onClick={() => handleDeleteList(null, list.id, space.id)}
-                      className="btnLink"
-                      title="Delete list"
-                    >
-                      Delete
-                    </button>
+
+                    {/* actions */}
+                    <div>
+                     {/* Replace the Move button with a dropdown */}
+                      <select
+                        aria-label="Move list"
+                        value={movePick[list.id] ?? ""}
+                        onChange={async (e) => {
+                          const value = e.target.value;
+                          if (!value) return;
+
+                          try {
+                            if (value.startsWith("space:")) {
+                              const sid = Number(value.slice("space:".length));
+                              if (Number.isFinite(sid) && sid !== list.space_id) {
+                                await moveListToSpace(list.id, sid);
+                                const [srcLists, dstLists] = await Promise.all([
+                                  getSpaceLists(space.id),
+                                  getSpaceLists(sid),
+                                ]);
+                                setListsBySpace(prev => ({ ...prev, [space.id]: srcLists, [sid]: dstLists }));
+                              }
+                            } else if (value.startsWith("folder:")) {
+                              const fid = Number(value.slice("folder:".length));
+                              if (Number.isFinite(fid) && fid !== (list.folder_id ?? -1)) {
+                                await moveListToFolder(list.id, fid);
+                                const [srcLists, folderLists] = await Promise.all([
+                                  getSpaceLists(space.id),
+                                  getFolderLists(fid),
+                                ]);
+                                setListsBySpace(prev => ({ ...prev, [space.id]: srcLists }));
+                                setListsByFolder(prev => ({ ...prev, [fid]: folderLists }));
+                              }
+                            }
+                          } finally {
+                            // reset dropdown via state (React-friendly)
+                            setMovePick(prev => ({ ...prev, [list.id]: "" }));
+                          }
+                        }}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <option value="">Move to…</option>
+
+                        {/* spaces */}
+                        <optgroup label="Spaces">
+                          {spaces.map(s => (
+                            <option
+                              key={`space-${s.id}`}
+                              value={`space:${s.id}`}
+                              disabled={s.id === list.space_id && list.folder_id == null} // avoid no-op
+                            >
+                              {s.name}{s.id === list.space_id && list.folder_id == null ? " (current)" : ""}
+                            </option>
+                          ))}
+                        </optgroup>
+
+                        {/* folders in this space */}
+                        <optgroup label="Folders in this space">
+                          {(foldersBySpace[space.id] || []).map(f => (
+                            <option
+                              key={`folder-${f.id}`}
+                              value={`folder:${f.id}`}
+                              disabled={f.id === (list.folder_id ?? -999)} // avoid no-op
+                            >
+                              {f.name}{f.id === (list.folder_id ?? -999) ? " (current)" : ""}
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+
+                      <button
+                        onClick={() => handleDeleteList(null, list.id, space.id)}
+                        className="btnLink"
+                        title="Delete list"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))}
+
 
                 {/* FOLDERS (each with their nested lists) */}
                 {(foldersBySpace[space.id] || []).map((folder) => (
@@ -397,6 +478,52 @@ async function handleDeleteFolder(spaceId: number, folderId: number) {
                           </>
                         )}
                       </div>
+                        <select
+                          aria-label="Move folder"
+                          value={moveFolderPick[folder.id] ?? ""}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={async (e: React.ChangeEvent<HTMLSelectElement>) => {
+                            const value = e.target.value;
+                            if (!value) return;
+
+                            try {
+                              if (value.startsWith("space:")) {
+                                const sid = Number(value.slice("space:".length));
+                                // no-op if same space
+                                if (Number.isFinite(sid) && sid !== space.id) {
+                                  await moveFolder(folder.id, sid);
+
+                                  // refresh source + destination folder lists
+                                  const [src, dst] = await Promise.all([
+                                    getFolders(space.id),
+                                    getFolders(sid),
+                                  ]);
+                                  setFoldersBySpace(prev => ({ ...prev, [space.id]: src, [sid]: dst }));
+
+                                  // (optional) auto-expand destination space to show the moved folder
+                                  setExpandedSpaces(prev => ({ ...prev, [sid]: true }));
+                                }
+                              }
+                            } finally {
+                              // reset dropdown
+                              setMoveFolderPick(prev => ({ ...prev, [folder.id]: "" }));
+                            }
+                          }}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <option value="">Move to…</option>
+                          <optgroup label="Spaces">
+                            {spaces.map(s => (
+                              <option
+                                key={`space-move-${folder.id}-${s.id}`}
+                                value={`space:${s.id}`}
+                                disabled={s.id === space.id} // prevent no-op
+                              >
+                                {s.name}{s.id === space.id ? " (current)" : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
 
                       <button
                         className="btnLink"

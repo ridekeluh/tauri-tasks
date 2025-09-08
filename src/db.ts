@@ -73,6 +73,37 @@ export async function getDb(): Promise<Database> {
       );
     `);
 
+      // ---- Migrations: add "position" to folders/lists if missing ----
+      const folderCols = await db.select<{ name: string }[]>(`PRAGMA table_info(folders);`);
+      if (!folderCols.some(c => c.name === "position")) {
+        await db.execute(`ALTER TABLE folders ADD COLUMN position INTEGER NOT NULL DEFAULT 0;`);
+        // Initialize positions per space
+        await db.execute(`
+          WITH ranked AS (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY space_id ORDER BY id) - 1 AS rn
+            FROM folders
+          )
+          UPDATE folders SET position = (SELECT rn FROM ranked WHERE ranked.id = folders.id);
+        `);
+      }
+
+      const listCols2 = await db.select<{ name: string }[]>(`PRAGMA table_info(lists);`);
+      if (!listCols2.some(c => c.name === "position")) {
+        await db.execute(`ALTER TABLE lists ADD COLUMN position INTEGER NOT NULL DEFAULT 0;`);
+        // Initialize positions per container (space-level or folder-level)
+        await db.execute(`
+          WITH ranked AS (
+            SELECT id,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY space_id, COALESCE(folder_id, -1)
+                    ORDER BY id
+                  ) - 1 AS rn
+            FROM lists
+          )
+          UPDATE lists SET position = (SELECT rn FROM ranked WHERE ranked.id = lists.id);
+        `);
+      }
+
     // --- Seed defaults & backfill ---
     const defaultSpaceId = await ensureDefaultSpace(db);
     const defaultFolderId = await ensureDefaultFolder(db, defaultSpaceId);
@@ -339,5 +370,107 @@ export async function resetTimer(id: number): Promise<void> {
      SET accumulated_seconds = 0, running_since = NULL
      WHERE id = ?;`,
     [id]
+  );
+}
+
+// Utility: next position for folders within a space
+async function nextFolderPosition(db: Database, spaceId: number): Promise<number> {
+  const rows = await db.select<{ maxpos: number | null }[]>(
+    `SELECT MAX(position) as maxpos FROM folders WHERE space_id = ?;`, [spaceId]
+  );
+  return (rows[0]?.maxpos ?? -1) + 1;
+}
+
+// Utility: next position for lists within a container (space-level OR folder-level)
+async function nextListPositionForSpace(db: Database, spaceId: number): Promise<number> {
+  const rows = await db.select<{ maxpos: number | null }[]>(
+    `SELECT MAX(position) as maxpos FROM lists WHERE space_id = ? AND folder_id IS NULL;`, [spaceId]
+  );
+  return (rows[0]?.maxpos ?? -1) + 1;
+}
+async function nextListPositionForFolder(db: Database, folderId: number): Promise<number> {
+  const rows = await db.select<{ maxpos: number | null }[]>(
+    `SELECT MAX(position) as maxpos FROM lists WHERE folder_id = ?;`, [folderId]
+  );
+  return (rows[0]?.maxpos ?? -1) + 1;
+}
+
+/** (optional) reorder within same container: move up/down by swapping positions */
+export async function reorderFolder(folderId: number, delta: -1 | 1): Promise<void> {
+  const db = await getDb();
+  const f = await db.select<{ id:number; space_id:number; position:number }[]>(
+    `SELECT id, space_id, position FROM folders WHERE id = ?;`, [folderId]
+  );
+  if (!f.length) return;
+  const { space_id, position } = f[0];
+
+  const neighbor = await db.select<{ id:number; position:number }[]>(
+    `SELECT id, position FROM folders
+     WHERE space_id = ? AND position ${delta < 0 ? '<' : '>'} ?
+     ORDER BY position ${delta < 0 ? 'DESC' : 'ASC'} LIMIT 1;`,
+    [space_id, position]
+  );
+  if (!neighbor.length) return;
+
+  await db.execute(`UPDATE folders SET position = ? WHERE id = ?;`, [neighbor[0].position, folderId]);
+  await db.execute(`UPDATE folders SET position = ? WHERE id = ?;`, [position, neighbor[0].id]);
+}
+
+export async function reorderList(listId: number, delta: -1 | 1): Promise<void> {
+  const db = await getDb();
+  const L = await db.select<{ id:number; space_id:number; folder_id:number|null; position:number }[]>(
+    `SELECT id, space_id, folder_id, position FROM lists WHERE id = ?;`, [listId]
+  );
+  if (!L.length) return;
+  const { space_id, folder_id, position } = L[0];
+
+  const neighbor = await db.select<{ id:number; position:number }[]>(
+    `SELECT id, position FROM lists
+     WHERE space_id = ? AND (folder_id IS ? OR folder_id = ?)
+       AND position ${delta < 0 ? '<' : '>'} ?
+     ORDER BY position ${delta < 0 ? 'DESC' : 'ASC'} LIMIT 1;`,
+    [space_id, folder_id, folder_id, position]
+  );
+  if (!neighbor.length) return;
+
+  await db.execute(`UPDATE lists SET position = ? WHERE id = ?;`, [neighbor[0].position, listId]);
+  await db.execute(`UPDATE lists SET position = ? WHERE id = ?;`, [position, neighbor[0].id]);
+}
+
+/** Move a folder to another space (appends at end) */
+export async function moveFolder(folderId: number, newSpaceId: number): Promise<void> {
+  const db = await getDb();
+  const pos = await nextFolderPosition(db, newSpaceId);
+  await db.execute(
+    `UPDATE folders SET space_id = ?, position = ? WHERE id = ?;`,
+    [newSpaceId, pos, folderId]
+  );
+  // keep lists under this folder aligned with the new space
+  await db.execute(`UPDATE lists SET space_id = ? WHERE folder_id = ?;`, [newSpaceId, folderId]);
+}
+
+/** Move a list so it belongs directly to a space (top-level) */
+export async function moveListToSpace(listId: number, spaceId: number): Promise<void> {
+  const db = await getDb();
+  const pos = await nextListPositionForSpace(db, spaceId);
+  await db.execute(
+    `UPDATE lists SET space_id = ?, folder_id = NULL, position = ? WHERE id = ?;`,
+    [spaceId, pos, listId]
+  );
+}
+
+/** Move a list under a specific folder (space inferred from folder) */
+export async function moveListToFolder(listId: number, folderId: number): Promise<void> {
+  const db = await getDb();
+  const rows = await db.select<{ space_id: number }[]>(
+    `SELECT space_id FROM folders WHERE id = ?;`, [folderId]
+  );
+  if (!rows.length) return;
+  const spaceId = rows[0].space_id;
+  const pos = await nextListPositionForFolder(db, folderId);
+
+  await db.execute(
+    `UPDATE lists SET space_id = ?, folder_id = ?, position = ? WHERE id = ?;`,
+    [spaceId, folderId, pos, listId]
   );
 }
