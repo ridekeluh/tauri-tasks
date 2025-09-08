@@ -11,8 +11,12 @@ import {
   addFolder,
   addListToSpace,
   addListToFolder,
+  renameSpace,
+  renameFolder,
+  renameList,
   deleteSpace as dbDeleteSpace,
   deleteList as dbDeleteList,
+  deleteFolder as dbDeleteFolder, 
 } from "../db";
 
 type Props = {
@@ -34,6 +38,15 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
 
   const [activeSpaceForNewFolderOrList, setActiveSpaceForNewFolderOrList] = useState<number | null>(null);
   const [activeFolderForNewList, setActiveFolderForNewList] = useState<number | null>(null);
+
+  const [editingSpaceId, setEditingSpaceId] = useState<number | null>(null);
+  const [spaceDraft, setSpaceDraft] = useState("");
+
+  const [editingFolderId, setEditingFolderId] = useState<number | null>(null);
+  const [folderDraftEdit, setFolderDraftEdit] = useState("");
+
+  const [editingListId, setEditingListId] = useState<number | null>(null);
+  const [listDraftEdit, setListDraftEdit] = useState("");
 
   useEffect(() => {
     refreshSpaces();
@@ -67,6 +80,39 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
       setListsByFolder((m) => ({ ...m, [folderId]: ls }));
     }
   }
+
+async function handleDeleteFolder(spaceId: number, folderId: number) {
+  // Delete from DB
+  await dbDeleteFolder(folderId);
+
+  // If the currently selected list lived inside this folder, clear selection
+  const listsInFolder = listsByFolder[folderId] || [];
+  if (selectedListId != null && listsInFolder.some(l => l.id === selectedListId)) {
+    onSelectList(null);
+  }
+
+  // Remove the folder from the space’s folder list (optimistic UI)
+  setFoldersBySpace(prev => {
+    const current = prev[spaceId] || [];
+    return { ...prev, [spaceId]: current.filter(f => f.id !== folderId) };
+  });
+
+  // Drop cached lists for that folder
+  setListsByFolder(prev => {
+    const { [folderId]: _removed, ...rest } = prev;
+    return rest;
+  });
+
+  // Collapse the folder if it was open
+  setExpandedFolders(prev => {
+    const { [folderId]: _exp, ...rest } = prev;
+    return rest;
+  });
+
+  // (Optional) Re-sync with DB to be extra safe:
+  // const fresh = await getFolders(spaceId);
+  // setFoldersBySpace(prev => ({ ...prev, [spaceId]: fresh }));
+}
 
   // ----- Adders -----
   async function handleAddSpace() {
@@ -158,8 +204,57 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                 title="Toggle open/close"
               >
                 <span style={styles.chev}>{expandedSpaces[space.id] ? "▾" : "▸"}</span>
-                <span>{space.name}</span>
+
+                {editingSpaceId === space.id ? (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!spaceDraft.trim()) return;
+                      await renameSpace(space.id, spaceDraft.trim());
+                      setEditingSpaceId(null);
+                      setSpaceDraft("");
+                      await refreshSpaces();
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ display: "inline-flex", gap: 6, alignItems: "center" }}
+                  >
+                    <input
+                      autoFocus
+                      value={spaceDraft}
+                      onChange={(e) => setSpaceDraft(e.target.value)}
+                      style={styles.inputSm}
+                    />
+                    <button className="btnLink" type="submit">Save</button>
+                    <button
+                      type="button"
+                      className="btnLink"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingSpaceId(null);
+                        setSpaceDraft("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <span>{space.name}</span>
+                    <button
+                      className="btnLink"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingSpaceId(space.id);
+                        setSpaceDraft(space.name);
+                      }}
+                      title="Rename space"
+                    >
+                      Rename
+                    </button>
+                  </>
+                )}
               </div>
+
               <button
                 className="btnLink"
                 onClick={(e) => {
@@ -241,16 +336,80 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                 {/* FOLDERS (each with their nested lists) */}
                 {(foldersBySpace[space.id] || []).map((folder) => (
                   <div key={folder.id} style={{ marginLeft: 18 }}>
-                    <div
-                      style={styles.folderRow}
-                      onClick={() => toggleFolder(folder.id)}
-                      title="Toggle lists"
-                    >
-                      <span style={styles.chev}>
-                        {expandedFolders[folder.id] ? "▾" : "▸"}
-                      </span>
-                      <span>{folder.name}</span>
+                    <div style={{ ...styles.folderRow, justifyContent: "space-between" }}>
+                      <div
+                        onClick={() => toggleFolder(folder.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                        title="Toggle lists"
+                      >
+                        <span style={styles.chev}>
+                          {expandedFolders[folder.id] ? "▾" : "▸"}
+                        </span>
+
+                        {editingFolderId === folder.id ? (
+                          <form
+                            onSubmit={async (e) => {
+                              e.preventDefault();
+                              if (!folderDraftEdit.trim()) return;
+                              await renameFolder(folder.id, folderDraftEdit.trim());
+                              setEditingFolderId(null);
+                              setFolderDraftEdit("");
+                              // refresh folders for this space
+                              const fs = await getFolders(space.id);
+                              setFoldersBySpace((m) => ({ ...m, [space.id]: fs }));
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ display: "inline-flex", gap: 6, alignItems: "center" }}
+                          >
+                            <input
+                              autoFocus
+                              value={folderDraftEdit}
+                              onChange={(e) => setFolderDraftEdit(e.target.value)}
+                              style={styles.inputSm}
+                            />
+                            <button className="btnLink" type="submit">Save</button>
+                            <button
+                              type="button"
+                              className="btnLink"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingFolderId(null);
+                                setFolderDraftEdit("");
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </form>
+                        ) : (
+                          <>
+                            <span>{folder.name}</span>
+                            <button
+                              className="btnLink"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingFolderId(folder.id);
+                                setFolderDraftEdit(folder.name);
+                              }}
+                              title="Rename folder"
+                            >
+                              Rename
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      <button
+                        className="btnLink"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteFolder(space.id, folder.id);
+                        }}
+                        title="Delete folder"
+                      >
+                        Delete
+                      </button>
                     </div>
+
 
                     {expandedFolders[folder.id] && (
                       <div style={styles.lists}>
@@ -283,17 +442,74 @@ export default function Sidebar({ selectedListId, onSelectList }: Props) {
                               alignItems: "center",
                               justifyContent: "space-between",
                               gap: 6,
+                              // (add marginLeft when rendering space-level lists if you had that)
                             }}
                           >
+                            <div>
+                              {editingListId === list.id ? (
+                                <form
+                                  onSubmit={async (e) => {
+                                    e.preventDefault();
+                                    if (!listDraftEdit.trim()) return;
+                                    await renameList(list.id, listDraftEdit.trim());
+                                    setEditingListId(null);
+                                    setListDraftEdit("");
+
+                                    // refresh the correct list collection
+                                    if (list.folder_id) {
+                                      const ls = await getFolderLists(list.folder_id);
+                                      setListsByFolder((m) => ({ ...m, [list.folder_id!]: ls }));
+                                    } else {
+                                      const ls = await getSpaceLists(list.space_id);
+                                      setListsBySpace((m) => ({ ...m, [list.space_id]: ls }));
+                                    }
+                                  }}
+                                  style={{ display: "inline-flex", gap: 6, alignItems: "center" }}
+                                >
+                                  <input
+                                    autoFocus
+                                    value={listDraftEdit}
+                                    onChange={(e) => setListDraftEdit(e.target.value)}
+                                    style={styles.inputSm}
+                                  />
+                                  <button className="btnLink" type="submit">Save</button>
+                                  <button
+                                    type="button"
+                                    className="btnLink"
+                                    onClick={() => {
+                                      setEditingListId(null);
+                                      setListDraftEdit("");
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </form>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => onSelectList(list.id)}
+                                    className="btnLink"
+                                    title="Show tasks"
+                                  >
+                                    {list.name}
+                                  </button>
+                                  <button
+                                    className="btnLink"
+                                    onClick={() => {
+                                      setEditingListId(list.id);
+                                      setListDraftEdit(list.name);
+                                    }}
+                                  >
+                                    Rename
+                                  </button>
+                                </>
+                              )}
+                            </div>
+
                             <button
-                              onClick={() => onSelectList(list.id)}
-                              className="btnLink"
-                              title="Show tasks"
-                            >
-                              {list.name}
-                            </button>
-                            <button
-                              onClick={() => handleDeleteList(folder.id, list.id)}
+                              onClick={() =>
+                                handleDeleteList(list.folder_id ?? null, list.id, list.space_id)
+                              }
                               className="btnLink"
                               title="Delete list"
                             >

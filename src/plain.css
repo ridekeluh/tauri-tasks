@@ -1,0 +1,26 @@
+/* Make buttons look like plain text links */
+.btnLink {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.btnLink:hover {
+  text-decoration: underline;
+}
+
+/* Optional: keep inputs readable but minimal */
+input {
+  font: inherit;
+}
+
+/* Optional: remove list bullets (layout, not design) */
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}

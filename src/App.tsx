@@ -11,28 +11,30 @@ import {
   startTimer,
   stopTimer,
   resetTimer,
+  renameTask, // ← use the exported helper from db.ts
 } from "./db";
 
 export default function App() {
   const [selectedListId, setSelectedListId] = useState<number | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTask, setNewTask] = useState("");
-  const [tick, setTick] = useState(0); // re-render heartbeat for running timers
+  const [tick, setTick] = useState(0);
 
-  // Ensure DB is ready on boot (creates default space/folder/list)
+  // inline edit state
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [taskDraft, setTaskDraft] = useState("");
+
   useEffect(() => {
     (async () => {
       await getDb();
     })();
   }, []);
 
-  // Load tasks when list changes
   useEffect(() => {
     if (selectedListId == null) return;
     fetchTasks(selectedListId);
   }, [selectedListId]);
 
-  // 1s ticker only when any task is running
   const anyRunning = useMemo(() => tasks.some(t => !!t.running_since), [tasks]);
   useEffect(() => {
     if (!anyRunning) return;
@@ -76,12 +78,29 @@ export default function App() {
     if (selectedListId != null) await fetchTasks(selectedListId);
   }
 
+  // ----- rename helpers -----
+  function beginEdit(t: Task) {
+    setEditingTaskId(t.id);
+    setTaskDraft(t.title);
+  }
+  async function saveEdit() {
+    if (editingTaskId == null) return;
+    const next = taskDraft.trim();
+    if (next) {
+      await renameTask(editingTaskId, next);
+      if (selectedListId != null) await fetchTasks(selectedListId);
+    }
+    setEditingTaskId(null);
+  }
+  function cancelEdit() {
+    setEditingTaskId(null);
+  }
+
   // ----- time helpers -----
   function secondsFor(t: Task): number {
     const base = t.accumulated_seconds || 0;
     if (!t.running_since) return base;
-    // use tick so it recomputes while running
-    void tick;
+    void tick; // force recompute while running
     const extra = Math.max(0, Math.floor((Date.now() - Date.parse(t.running_since)) / 1000));
     return base + extra;
   }
@@ -120,11 +139,7 @@ export default function App() {
                   borderRadius: 6,
                 }}
               />
-              <button
-                onClick={addTask}
-              >
-                Add
-              </button>
+              <button onClick={addTask}>Add</button>
             </div>
 
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -153,9 +168,31 @@ export default function App() {
                         onChange={() => toggleDone(t.id, t.done)}
                         title="Toggle done"
                       />
-                      <span style={{ textDecoration: t.done ? "line-through" : "none" }}>
-                        {t.title}
-                      </span>
+
+                      {editingTaskId === t.id ? (
+                        <input
+                          autoFocus
+                          value={taskDraft}
+                          onChange={(e) => setTaskDraft(e.target.value)}
+                          onBlur={saveEdit}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveEdit();
+                            if (e.key === "Escape") cancelEdit();
+                          }}
+                          style={{ width: 200 }}
+                        />
+                      ) : (
+                        <span
+                          style={{
+                            textDecoration: t.done ? "line-through" : "none",
+                            cursor: "pointer",
+                          }}
+                          onDoubleClick={() => beginEdit(t)}
+                          title="Double-click to rename"
+                        >
+                          {t.title}
+                        </span>
+                      )}
                     </div>
 
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -170,7 +207,6 @@ export default function App() {
                         {fmt(secs)}
                       </span>
 
-                      {/* ⏱ Stopwatch toggle */}
                       <button
                         onClick={() => toggleTimerFor(t)}
                         title={running ? "Stop timer" : "Start timer"}

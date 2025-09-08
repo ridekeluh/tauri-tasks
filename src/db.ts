@@ -39,9 +39,11 @@ export async function getDb(): Promise<Database> {
 
     // Unified lists table: supports space-level lists OR folder-level lists
     await db.execute(`
+      PRAGMA foreign_keys = ON;
+
       CREATE TABLE IF NOT EXISTS lists (
         id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        space_id  INTEGER NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        space_id  INTEGER NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
         folder_id INTEGER NULL REFERENCES folders(id) ON DELETE CASCADE,
         name      TEXT NOT NULL
       );
@@ -245,6 +247,12 @@ export async function deleteList(listId: number): Promise<void> {
   await db.execute(`DELETE FROM lists WHERE id = ?;`, [listId]);
 }
 
+// Delete a folder (cascades to its lists -> tasks)
+export async function deleteFolder(folderId: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(`DELETE FROM folders WHERE id = ?;`, [folderId]);
+}
+
 // ---------- Tasks ----------
 export async function getTasks(listId: number): Promise<Task[]> {
   const db = await getDb();
@@ -272,6 +280,27 @@ export async function toggleTaskDone(id: number, done: number): Promise<void> {
 export async function deleteTask(id: number): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM tasks WHERE id = ?;`, [id]);
+}
+
+//-------- Edit ----------
+export async function renameSpace(id: number, name: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE spaces SET name = ? WHERE id = ?;`, [name, id]);
+}
+
+export async function renameFolder(id: number, name: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE folders SET name = ? WHERE id = ?;`, [name, id]);
+}
+
+export async function renameList(id: number, name: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE lists SET name = ? WHERE id = ?;`, [name, id]);
+}
+
+export async function renameTask(id: number, title: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(`UPDATE tasks SET title = ? WHERE id = ?;`, [title, id]);
 }
 
 // ---------- Time tracking ----------

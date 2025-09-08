@@ -24,3 +24,10 @@ export interface Task {
   accumulated_seconds: number;
   running_since: string | null;
 }
+
+export interface List {
+  id: number;
+  name: string;
+  space_id: number;
+  folder_id: number | null;
+}
